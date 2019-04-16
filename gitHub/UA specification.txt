@@ -1,0 +1,533 @@
+Universal Architecture ver. 0.1 (incomplete) specification
+written by Kyle Eames March 2019
+Big-endian, descending stack
+
+Section 1: Instruction set
+
+Subsection 1: Instruction format
+
+    The general layout of a UA instruction will be a five bit op-code, 3 operand type bits, 0 or
+    more 8-bit data pool addresses/operand IDs and 0 or more payloads. There will be some
+    exceptions; for example, the call instruction where the operand type bits will be unused,
+    making it a 5-bit op-code, 3 unused bits, 16-bit address. The operand type bits indicate
+    whether the operand is a data-pool (0) or non-data-pool (1) operand. The data-pool is 256
+    bytes of dual read memory built into this architecture which can be operated on directly.
+    The lower 128 bytes is the memory window which is mapped to an address in memory which can be
+    changed using the mw (move window) instruction. Depending on the mode, which can be changed
+    using the mode instruction, arithmetic word size can be 8, 16, 32 or 64-bit. Switching word
+    size and switching between floating point and signed integer mode can be achieved using the
+    mode instruction. Regardless of whether the operand type bit indicates a data-pool address
+    or a non-data-pool operand, the operand field is always 8-bit. Simply in the former case it
+    is an 8-bit address and in the latter it is an operand ID. After the operand field(s) there
+    may be a payload. The operand field indicates what this is and its size. It can be an
+    address to memory or an 8, 16, 32, or 64-bit literal. Literals cannot be destination operands
+    and there can only be one memory operand in each instruction.
+
+    Since no instruction in this instruction set contains more than one source operand, there will
+    always be only one payload, though its size can vary from 1 to 8 bytes.
+
+subsection 2: Source fields and destination fields.
+
+    Each instructions operand fields indicate an operand; a data-pool address, a register,
+    memory, or a literal. These can be in source fields; fields whose operand values are
+    only read or destination fields; fields whose operand values may be read but will also
+    be written. With the exception of single operand instructions and the mul and div
+    instructions, the first operand is always a destination operand and the second is always a
+    source operand. In the case of the mul and div instructions, the first 2 operands are
+    destinations and the third is a source.
+
+subsection 3: the Exit instruction
+
+    exit op-code: 0x00 operand: A single 8-bit exit code size: 2 bytes. No payload
+        The exit instruction terminates program execution. Zero was chosen as its op-code and
+        zero serves as the out of bounds execution error exit code because if execution proceeds
+        somewhere in memory where there is no machine code loaded, the fetch is most likely to
+        read a zero from memory. A 1 exit code indicates successful completion of a program. As
+        more exit codes are assigned, a table will be written here describing all the exit codes.
+
+        exit code (hexadecimal)    name                description
+        00                         outOfBoundsError     Occurs when program execution proceeds
+                                                        to an address where no machine code is
+                                                        present.
+        01                         successfulCompletion Indicates the successful completion and
+                                                        intentional termination of a program.
+        02                         SIMDError            Indicates improper use of SIMD operands
+                                                        in an instruction
+        03                         divideByZero         A divide by zero error.
+        04                         unresolvedError      Some instructions can set an 'error flag'
+                                                        when things go awry. Functions can do so
+                                                        when they return as well. If the
+                                                        instruction immediately following an
+                                                        instruction that sets the error flag
+                                                        isn't a conditional jump that tests the
+                                                        error flag, the program will end
+                                                        automatically and output an error code
+                                                        indicating the error that occurred. The
+                                                        ret instruction takes a single 8-bit
+                                                        operand. If the operand is zero, the
+                                                        error flag isn't set. If it's a non-zero
+                                                        value, the error flag is set and if the
+                                                        error isn't handled by the next
+                                                        instruction, the program exits with the
+                                                        exit code in the operand field of the
+                                                        return instruction, allowing programmers
+                                                        to create custom error codes.
+                                                        unresolvedError is just a general error
+                                                        exit code.
+        05                         signBitOverflow      If you get this exit code, it means there
+                                                        was a good old fashioned 2's compliment
+                                                        overflow error.
+        06                         invalidInstruction   If an instruction is invalid (a literal
+                                                        in a destination field, for example,)
+                                                        the the program halts immediately with
+                                                        this exit code.
+
+subsection 4: Arithmetic and Logic instructions
+
+    All arithmetic and logic instructions set flag bits according to the operations they perform.
+    unless the destination operand is SIMD (Single Instruction Multiple Data.) Flag bits set by
+    all arithmetic and logic instructions include ZF-the zero flag if the result is zero and SF-
+    the sign flag--unless the operands are different bit-lengths as can occur if the bit length
+    mode is different from a register operand and another operand is a data-pool operand. OF,
+    the overflow flag is also set by the addition, subtraction and multiplication instructions
+    if bits overflow out of destination operands.
+
+    add op-code: 0x01 operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        Adds the first operand to the second operand and stores the sum in the first. Sets NOF
+        and EF, the signed integer overflow flag and error flag if both addends are positive
+        and the sum is negative or both addends are negative and the sum is positive.
+
+    sub op-code: 0x02 operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        Subtracts the second operand from the first and stores the difference in the first
+        operand. Sets NOF and EF if the minuend is negative, the subtrahend is positive and the
+        difference is positive or the minuend is positive, the subtrahend is negative and the
+        difference is negative.
+
+    mul op-code: 0x03 operands: two destination fields and one source field size: 4 bytes with
+    possible payload.
+        multiplies the second operand by the third and stores the upper bits of the product in
+        the first operand and the lower bits in the second. If the first and second destination
+        fields are the same, only the lower bits of the product are stored. In this case, OF,
+        the overflow flag and EF the error flag are set if bits overflow out of the second
+        operand. NOF and EF are set if the factors are positive and the product negative, the
+        factors negative and the product negative, the first factor negative, the second positive
+        and the product positive, or vice versa.
+
+    div op-code: 0x04 operands: two destination fields and one source field size: 4 bytes with
+    possible payload.
+        Floor divides the second operand by the third. The modulo of the second and third
+        operand is stored in the first operand and the quotient in the second. If the first and
+        second operand are the same, only the quotient is stored.
+
+    ign op-code: 0x05 no operands size: 1 byte. No payload
+        The operand type bits are used to set RF, the response flag. Zero in the
+        operand type bits un-sets the response flag, causing all errors to be ignored until the
+        next use of this instruction, function call or return. A non-zero value in the operand
+        type bits will set the response flag.
+
+    mode op-code: 0x06 operand: one 8-bit integer size: 2 bytes. No payload
+        This instruction switches between floating-point and signed integer modes as well as
+        selecting the word size of data-pool operands. In the lower 4 bits of the operand, 0
+        selects a word length of 8 bits, 1 selects a word length of 16 bits 2, a word length of
+        32 bits, and 3 is 64 bits. Zero in the upper 4 bits of the operand selects signed
+        integer mode and a non-zero value selects floating-point mode.
+
+    and op-code: 0x07 operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        Performs a bitwise and on the operands and stores the result in the first operand.
+
+    or op-code: 0x08 operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        Performs a bitwise or on the operands and stores the result in the first operand.
+
+    nor op-code: 0x09 operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        Performs a bitwise nor on the operands and stores the result in the first operand.
+
+    xor op-code: 0x0A operands: one destination field and one source field size: 3 bytes with
+    possible payload.
+        performs a bitwise xor on the operands and stores the result in the first operand.
+
+    not op-code: 0x0B operand: one destination field size: 2 bytes No payload
+        Stores a bitwise not of the operand in the operand.
+
+    cmp op-code: 0x0C operands: 2 source fields size: 3 bytes with possible payload.
+        Sets the flag bits according to the subtraction of operand 2 from operand 1 without
+        storing the result. Only one operand can be memory, though it can be either operand.
+        This instruction sets the flag bits in the same manner as the sub instruction. It just
+        doesn't store the difference and a memory operand can be the minuend.
+
+subsection 5: Flow control
+
+    jfl op-code: 0x0D operands: the operand type bits and a 16-bit address size: 3 bytes
+        This is a conditional branch instruction. The operand type bits rather than indicating
+        whether each proceeding operand is a data-pool operand are used to identify which of
+        the flag bits is tested as the condition for the jump. The flag bits are enumerated
+        in the following order in ascending order starting at zero: ZF SF OF NOF TF EF DZF RF.
+        Rather than having an unconditional jump instruction, a true flag (TF) is included in
+        the flags register which is always set. If the flag bit is 1, execution resumes at the
+        address in the address field.
+
+    sfl op-code: 0x0E operands: the operand type bits and a 16-bit address size: 3 bytes
+        This is another conditional branch instruction but it branches if the specified flag is
+        zero, not if it's 1. The pneumonic 'sfl' actually stands for 'stay if flag.'
+
+    call op-code: 0x0F operand: a single 16-bit address size: 3 bytes
+        The call instruction in this architecture is designed to automate as much of the calling
+        protocol as possible to ensure interoperability of binaries from different compilers.
+        Rather than leaving it to programmers to decide whether the caller or the callee saves
+        the stack pointer and allocation pointer to the stack, this instruction saves them to
+        the stack along with the instruction pointer. The allocation pointer always points to
+        the bottom of the callers stack frame. Subtracting from ap increases the size of a
+        functions stack frame. Adding to ap decreases it. A call writes the instruction pointer
+        + 3 (so it points to the instruction after the call) to ap - 6, the stack pointer to
+        ap - 4, and the allocation pointer to ap - 2. The address operand is then stored in the
+        instruction pointer, ap - 6 is stored in the stack pointer and the allocation pointer.
+
+    ret op-code: 0x10 operand: 1 8-bit return status code size: 2 bytes
+        The return instruction reverses the operation of the previous call regardless of what
+        the return status call does. It does this by writing the value at the stack pointer to
+        the instruction pointer, the value at sp + 2 to the stack pointer, and sp + 4 to the
+        allocation pointer. A return status code of zero indicates that no error has occurred.
+        If a non-zero value is present in the operand field of the return instruction, the
+        error flag is set and the return status code is written to the return status register.
+
+subsection 6: Memory access, management and data transfer
+
+    mov op-code: 0x11 operands: one destination field and one source field size: 3 bytes with
+    possible payload
+        Since no arithmetic is performed on the operands, this instruction is the one exception
+        to the rule that memory cannot be in destination fields, but literals cannot. This
+        instruction copies the value of the second operand into the first. Registers, memory,
+        and data-pool can be transferred between one another and a literal can be stored in any
+        register, memory, or data-pool.
+
+    mw op-code: 0x12 operands: One source field size: 2 bytes with possible payload
+        This instruction changes the location in memory to which the memory window is mapped.
+        The memory window is the lower 128 bytes of the data-pool which are mapped to a location
+        in memory. If the operand is a 16-bit literal, its value becomes the new location of the
+        window. If it's a data-pool address, the 16-bit address at that location in the
+        data-pool becomes the new window location. Register values can be used as well via their
+        operand IDs. When register offsets are used, the sum of the register and the offset
+        becomes the new location, not the value at that address. This instruction takes an
+        address from one of the sources described above writes the current contents of the
+        memory window to the old location of the memory window and reads the values from the
+        new location into the memory window.
+
+    alloc op-code: 0x13 operand: one source field size: 2 bytes with possible payload
+        This instruction is used to allocate memory to the current functions stack frame. It's
+        basically a sub instruction with the allocation pointer as the implicit destination
+        operand. Since incrementing and decrementing the allocation pointer are likely to be
+        frequent operations, this instruction serves as a memory conservation measure. That is,
+        alloc 0x80 contains one fewer bytes than sub ap 0x80.
+
+subsection 7: I/O
+
+    I/O in this architecture is instruction based with interrupt I/O support to be implemented
+    at a later time. Using the IOchan instruction, IO can be directed to a variety of sources/
+    destinations. The first to be implemented will be console and file I/O. For console I/O,
+    address 0 in memory is selected. The lower 256 bytes of memory are reserved for non-file
+    I/O channels. Any address that points to a null terminated file path string greater than
+    255 will open that file for reading or writing depending on whether the in or out/outs
+    instruction is used after the I/O channel is selected. Changing the I/O channel to
+    something else closes the file. While the file is opened, the read/write position is saved.
+    The seek instruction can be used to alter the read position.
+
+    IOchan op-code: 0x14 operand: one source field which provides a 16-bit integer for use as
+    an address size: 3 bytes with possible payload
+        This instruction takes an address literal (16-bit int,) a register, a value at a data-
+        pool address and saves it as the current I/O channel. The lower 256 bytes are reserved
+        and used to encode I/O channels other than file I/O. Any other address which points to
+        a valid null-terminated file path string will open that file. Currently, zero is used
+        to select console I/O.
+
+    in op-code: 0x15 operands: two source fields which provide 16-bit integers for use as
+    addresses. Both can be literals since they are source fields, but only one can be memory.
+    size: 3 bytes with possible payload
+        Reads input from the current I/O channel into memory starting at the first specified
+        address and stopping at the second. If an input is larger than the memory allocated to
+        it, the remaining input is discarded in the case of event I/O like console input and a
+        read position is saved for persistent data sources like files and in the case of files,
+        the file continues to be read from the saved read position.
+
+    out op-code: 0x16 operands: two source fields which provide 16-bit integers for use as
+    addresses. Like in the in instruction, both can be literals but only one can be memory.
+    size: 3 bytes with possible payload
+        Outputs the memory starting at the first address and stopping at the second address to
+        the selected I/O channel.
+
+    outs op-code: 0x17 operand: one source field which provides a 16-bit integer for use as an
+    address. size: 2 bytes with possible payload
+        Outputs a null terminated string at the specified address the the selected I/O channel.
+        This instruction is designed to output a string.
+
+    seek op-code: 0x18 operand: one source field which provides a 64 bit integer for use in
+    indexing persistent data sources for I/O, like files. This instruction is used to change the
+    read position. size: 2 bytes with possible payload.
+
+    inth op-code: 0x19 operand: one 16-bit address size: 3 bytes
+        This op-code is reserved for use as an instruction which handles interrupt I/O. It
+        designates a function for processing an interrupt when it occurs.
+
+    NOP op-code: 0x1A No operands
+        A no-op instruction.
+
+    Opcodes greater than 0x1A are all alternative op-codes for the exit instruction.
+
+section 2: The Data-pool, memory window, and parameter space
+
+    The data-pool takes the place of general purpose registers in a more conventional
+    architecture. It's 256 bytes of dual read memory built into the machine itself and it's
+    fast memory which can be used as the destination operand in any arithmetic/logic operation.
+    Individual bytes in the data-pool are individually addressable so arithmetic word size is
+    set using a special mode instruction described above.
+
+    The data-pool is divided into 2 sections called the memory window and the parameter space
+    with the lower 128 bytes serving as the former and the upper 128 bytes serving as the
+    latter. To distinguish data-pool operands from other operands, there are 3 operand type bits
+    after the op-code of each instruction; 0 for data-pool addresses and 1 for other operands.
+
+subsection 1: the memory window
+
+    The lower 128 bytes of the data-pool is the memory window. This is mapped to a location in
+    memory stored in a special-purpose register called wl (window location.) Using the mw
+    instruction, the location of the memory window can be changed. This instruction will write
+    the contents of the memory window to the old location, read the contents of memory at the
+    new location into the memory window, and store the address of the new location in wl.
+
+subsection 2: the parameter space
+
+    The upper 128 bytes of the data-pool is the parameter space. It isn't mapped to memory so
+    when the memory window is moved, the values stored in the parameter space remain constant.
+    It is intended for storing values which are intended to persist when the window location
+    changes and parameters to functions, hence its name.
+
+subsection 3: assembly notation
+
+    The memory window and parameter space are represented in assembly language using the
+    pneumonic w or ps followed by a 2 digit hexadecimal number. i.e.: w00, p25, w7C etc.
+    In assembly, both are indexed from zero to 127. The assembler will automatically convert
+    these to valid data-pool addresses; i.e.: in assembly: p7F in machine code: 0xFF.
+
+section 4: Registers
+
+    Values in the data-pool and offsets to the same cannot be used to address memory. For this
+    reason, there are 8 imaginary registers located in the data-pool whose values or offsets to
+    the same can be used to address memory. These are 16-bit registers, 4 in the lower 8 bytes
+    of the memory window and 4 in the lower 8 bytes of the parameter space. The imaginary
+    registers in the memory window are called wi0, wi1, wi2, and wi3. The imaginary registers in
+    the parameter space are called pi0, pi1, pi3 and pi4
+
+    If SIMD operands are being used by a program, the imaginary registers cannot be used for
+    addressing memory because they would be filled with garbage addresses. For this reason,
+    there are also 4 16-bit registers whose sole purpose is storing addresses. These are simply
+    called address registers. Their assembly pneumonics are ar0, ar1, ar2 and ar3. When not
+    being used for addresses, they could also be used as 16-bit general-purpose data registers.
+
+    The registers in this architecture are primarily special purpose registers. The data-pool
+    is intended to handle all general data storage. The registers, along with all other operands
+    have an operand ID and these will be listed in the following section on the subject.
+
+    The instruction pointer (ip) points to the address of the current instruction. Each
+    instruction increments it by its size in bytes so it points to the next instruction. Its
+    assembly pneumonic is ip.
+
+    The stack pointer points to the top of the top of the current functions stack frame; where
+    the callers ip, sp and ap values are located. Its assembly pneumonic is sp.
+
+    the allocation pointer points to the bottom of the current functions stack frame; the
+    functions allocation of memory on the stack. Its assembly pneumonic is ap and offsets to it
+    can be used to access the stack frame.
+
+    The window location register holds the address in memory to which the memory window is
+    currently mapped and it is the register whose value is altered by the mw instruction. Its
+    assembly pneumonic is wl.
+
+    The flags register holds all the flag bits. They are stored in the order ZF, SF, OF, NOF,
+    TF, EF, DZF, RF, SEF, FMF, and two word-length flags: WLF0 and WLF1. There are four zeroes
+    (unused bits) following WLF1 making it a 16-bit register. The individual flags, their
+    meanings, operand IDs etc. will be explained in a dedicated section on the subject. The
+    assembly pneumonic for this register is flg.
+
+    The return status register stores the return status of the last function to be called. A
+    non-zero return status sets the error flag (EF.) Accessing this register in error handling
+    code can be a means of determining what programmer-defined error occurred during the
+    execution of a function. When programmer generated errors occur and go unhandled the program
+    halts and the value of the return status register becomes the exit code. Its assembly
+    pneumonic is rs.
+
+Section 5: Memory operands
+
+    Memory can be addressed directly with a literal address, an offset to a register, or a
+    register value. The current version of this architecture uses 16-bit addressing and
+    supports 65536 bytes of memory. A memory operand can only be a source field except in the
+    mov instruction and only one operand field in each instruction can be a memory operand.
+    When an address literal or register offset are used to address memory, this is indicated by
+    the operand ID in the instruction. and a 16-bit address literal or register offset appears
+    after the instruction as payload.
+
+Section 6: SIMD operands
+
+    SIMD stands for Single Instruction Multiple Data. It improves the performance of software by
+    performing the same operation on multiple items of data simultaneously rather than
+    sequentially. This architecture performs SIMD operations by using special SIMD operands, of
+    which there are four. The first is the lower 64 bytes of the memory window, the second is the
+    upper 64 bytes of the memory window, the third is the lower 64 bytes of the parameter space,
+    and the fourth is the upper 64 bytes of the parameter space.
+
+    The mode instruction divides the SIMD operands into consecutive words of the size specified
+    in the operand field. When an instruction contains SIMD operands, the same exact operation is
+    performed on each value in the simd group. For example:
+
+    mode    signedInt   dWord
+    :SIMDLoop:
+    add     ws0         ws1
+
+    These instructions would add 16 consecutive d-words in the lower 64 bytes of the memory
+    window to 16 consecutive d-words in the upper 64 bytes of the memory window and store 16
+    separate 32-bit sums consecutively in the lower 64 bytes of the memory window. Assuming
+    that the following code is a continuation of the same program, it would
+    subtract 16 consecutive d-words in the upper 64 bytes of the parameter space from 16
+    consecutive d-words in the lower 64 bytes of the memory window and store 16 32-bit
+    differences in the lower 64 bytes of the memory window. It would then store all these values
+    to memory, retrieve the next set of values and repeat until the program overwrites itself.
+
+    sub     ws0         ps1
+    mov     @wl         ws0
+    mov     @ar0        ps1
+    mw      wl+64
+    add     ar0         0wd64
+    jfl     TF          SIMDLoop
+
+    When all operands are SIMD, the above is what happens. However, if a source operand is
+    memory, 64 consecutive bytes of memory are read from the address into the SIMD group
+    specified. If the destination operand in a mov instruction is memory and the source is SIMD,
+    the SIMD group will be written to 64 consecutive bytes of memory. If a SIMD operand is in
+    the destination field of an instruction and a scalar (a non-SIMD operand other than memory)
+    is in the source field, the same number will be added to each value in the SIMD operand and
+    stored in its place. In the following example, let's assume that the values stored in the
+    SIMD group are the numbers 0 through 32.
+
+    mode    signedInt   word
+    mov     ws1         @consecutiveNums
+    add     ws1         0wd10 // '0wd' is just a way to explicitly indicate a 16-bit literal
+                              // represented in decimal.
+
+    These instructions would result in 32 16-bit words stored in the upper 64 bytes of the
+    memory window with the values 10 through 42.
+
+Section 7: the Flag Bits
+
+    The flag bits are boolean flags used for flow control. There are 8 flags which are directly
+    accessible to the conditional jump instructions via their conditional branch IDs (in
+    parentheses). The rest can be tested indirectly using their operand IDs and the cmp
+    instruction which will set the zero and sign flags, which are directly accessible by the
+    jump instructions.
+
+    ZF (0): The Zero Flag is set when the result of an operation is equal to zero.
+
+    SF (1): The Sign Flag is set when the result of an operation is negative.
+
+    OF (2): The Overflow Flag is set when the result of an operation overflows from a destination
+        operand. One way it can be used is by adding the carry from the addition of 128-bit
+        integers to the upper 64 bits of the sum.
+
+    NOF (3): The Negative Overflow Flag is set when a twos compliment overflow occurs. The Error
+        Flag is also set when a twos compliment overflow occurs.
+
+    TF (4): This flag bit is always set. It is used for unconditional jumps, analogous to if True,
+        or while True in high level languages.
+
+    EF (5): An instruction sets the Error Flag when errors other than invalid instruction errors
+        occur. When the error flag is set, the instruction immediately following the instruction
+        that set it MUST be a conditional jump testing the error flag or the program will halt
+        with the exit code corresponding to the error that occurred. When the error flag is
+        tested it is automatically reset to zero. The Error Flag can also be set intentionally
+        by a programmer using a return instruction with a non-zero value in its operand field.
+        If the instruction after the call isn't a conditional jump testing the error flag, the
+        the operand field of the return instruction becomes the exit code.
+
+    DZF (6): This flag is set when a divide by zero error occurs along with EF.
+
+    RF (7): The Response Flag is set and unset by the ign instruction. It is also set by calls
+        to a function and returns to a functions caller. When this flag is unset, everything
+        other than invalid instruction errors is ignored.
+
+    SEF:The SIMD Error Flag is set when a SIMD error occurs along with the error flag.
+        For example, if a scalar is the destination operand of an instruction and a SIMD
+        operand is a source, the SIMD Error Flag is set, as is the error flag.
+
+    FMF A mode flag indicating whether data pool operands are processed as signed integers or
+        floating points. Zero is signed int, one is floating point. The acronym is Float Mode
+        Flag.
+
+    WLF0 & WLF1: The Word Length flags together constitute a 2-bit integer with WLF0 being the
+        significant bit and WLF1 being the lower bit. Their numeric value indicates whether
+        data-pool operands are to be handled as 8-bit (0,) 16-bit (1,) 32-bit (2,) or 64-bit(3)
+        values. In assembly, they are collectively referred to as WLB (Word Length Bits.)
+
+    If a flag bit is in the destination field of an instruction, it will be set if the value
+    being stored in the flag bit is odd, and unset if it is even.
+
+Section 8: Operand IDs
+
+    Every non-data-pool operand has an operand ID assigned to it. This is an 8-bit unsigned
+    integer. The operand IDs for all operands are listed here.
+
+    0x00 through 0x03: the imaginary registers in the memory window; wi0 through wi3
+    0x04 through 0x07: the imaginary registers in the parameter space; pi0 through pi3
+        These operand IDs are used to perform operations on these registers and transfer values
+        between them and other operands.
+
+    0x08 through 0x0B: memory access with offsets to wi0 through wi3 as addresses
+    0x0C through 0x0F: memory access with offsets to pi0 through pi3 as addresses
+    0x10 through 0x13: memory access with the value of wi0 through wi3 as addresses
+    0x14 through 0x17: memory access with the value of pi0 through pi3 as addresses
+
+    0x18 through 0x1B: the address registers (ar0, ar1, ar2, and ar3)
+    0x1C through 0x1F: memory access with offsets to the address registers as addresses
+    0x20 through 0x23: memory access with the value of the address registers as addresses
+
+    0x24: the ip register
+    0x25: the sp register
+    0x26: memory access with an offset to sp as an address
+    0x27: memory access with the value of sp as an address
+    0x28: the ap register
+    0x29: memory access with an offset to ap as an address
+    0x2A: memory access with the value of ap as an address
+    0x2B: the wl register
+    0x2C: memory access with an offset to wl as an address
+    0x2D: memory access with the value of wl as an address
+    0x2E: the flags register (flg)
+    0x2F: The return status register (rs)
+
+    0x30: an 8-bit literal
+    0x31: a 16-bit literal
+    0x32: memory access with an address literal
+    0x33: a 32-bit literal
+    0x34: a 64-bit literal
+
+    0x35: ZF    conditional branch ID: 0
+    0x36: SF    conditional branch ID: 1
+    0x37: OF    conditional branch ID: 2
+    0x38: NOF   conditional branch ID: 3
+    0x39: TF    conditional branch ID: 4
+    0x3A: EF    conditional branch ID: 5
+    0x3B: DZF   conditional branch ID: 6
+    0x3C: RF    conditional branch ID: 7
+                In a conditional jump, the normal operand IDs of these flag bits aren't used.
+                A special conditional branch ID is stored in place of the operand type bits.
+                As there are only 3 operand type bits, the code space is very limited.
+
+    0x3D: SEF
+    0x3E: FMF
+    0x3F: WLF0 and WLF1 Accessed as a single 2-bit integer. these flags store the word-length
+        used in arithmetic/logic operations on data-pool values: 0 for 8 bit, 1 for 16 bit,
+        2 for 32 bit, and 3 for 64 bit.
+
+    0x40: memory window SIMD group 0 (wsg0)
+    0x41: memory window SIMD group 1 (wsg1)
+    0x42: parameter space SIMD group 0 (psg0)
+    0x43: parameter space SIMD group 1 (psg1)

@@ -1,0 +1,42 @@
+:main:
+    // housekeeping
+    alloc   0bx80
+    mw      @ap
+
+    // Get a string representation of an integer from the user.
+    IOchan  0
+    outs    main_userPrompt
+    in      @ap+16  @ap+31
+
+    // Pass the string representation of the integer to the convertToInt function.
+    mov     pi0     ap
+    add     pi0     0bd16
+    call    convertToInt
+    // Handle possible return status error.
+    sfl     EF      main_valueSuccessfullyConverted
+    outs    main_errorMessage
+    exit    0bxFF
+    :main_valueSuccessfullyConverted:
+    // Inform the user that the conversion to int was successful.
+    outs    main_successMessage
+    // Pass the address to which to write the string representation of the integer
+    // in pi0 and the value to be converted at p02.
+    mode    sInt    qword
+    mov     p02     p00
+    mov     pi0     ap
+    add     pi0     0bd32
+    call    intToStr
+    // Display the value the user entered and exit.
+    outs    main_yourNumberIs
+    outs    @ap+32
+    exit    0bx00
+
+  :main_userPrompt:
+  dm "Please type an integer value: ", 0bx00
+  :main_errorMessage:
+  dm "Your input was invalid!", 0bx00
+  :main_successMessage:
+  dm "Your number was successfully converted to a 64-bit signed integer.", 0bx00
+  :main_yourNumberIs:
+  dm "The number you entered is:", 0bx00
+
